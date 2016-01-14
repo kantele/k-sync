@@ -1,5 +1,5 @@
 {
-  "name": "sharedb",
+  "name": "k-sync",
   "version": "0.11.32",
   "description": "JSON OT database backend",
   "main": "lib/index.js",
@@ -19,7 +19,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/share/sharedb.git"
+    "url": "git://github.com/kantele/k-sync.git"
   },
   "author": "Nate Smith and Joseph Gentle",
   "license": "MIT"
