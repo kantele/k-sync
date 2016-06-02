@@ -20,7 +20,7 @@
     "test": "node_modules/.bin/mocha",
     "test-cover": "node_modules/istanbul/lib/cli.js cover node_modules/mocha/bin/_mocha"
   },
-  "repository": {s
+  "repository": {
     "type": "git",
     "url": "git://github.com/kantele/k-sync.git"
   },
