@@ -31,8 +31,8 @@ describe('client subscribe', function() {
       doc.create({age: 3}, function(err) {
         if (err) return done(err);
         async.parallel([
-          function(cb) { doc2.fetch(cb); },
-          function(cb) { doc2.fetch(cb); }
+          function(cb) { doc2[method](cb); },
+          function(cb) { doc2[method](cb); }
         ], function(err) {
           if (err) return done(err);
           expect(doc2.version).eql(1);
@@ -491,23 +491,6 @@ describe('client subscribe', function() {
     });
   });
 
-  it('calling subscribe, unsubscribe, subscribe sync leaves a doc subscribed', function(done) {
-    var doc = this.backend.connect().get('dogs', 'fido');
-    var doc2 = this.backend.connect().get('dogs', 'fido');
-    doc.create({age: 3}, function(err) {
-      if (err) return done(err);
-      doc2.subscribe();
-      doc2.unsubscribe();
-      doc2.subscribe(function(err) {
-        if (err) return done(err);
-        doc2.on('op', function(op, context) {
-          done();
-        });
-        doc.submitOp({p: ['age'], na: 1});
-      });
-    });
-  });
-
   it('doc fetches ops to catch up if it receives a future op', function(done) {
     var backend = this.backend;
     var doc = this.backend.connect().get('dogs', 'fido');
@@ -574,5 +557,58 @@ describe('client subscribe', function() {
     });
   });
 
+  describe('doc.subscribed', function() {
+    it('is set to false initially', function() {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      expect(doc.subscribed).equal(false);
+    });
+
+    it('remains false before subscribe call completes', function() {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.subscribe();
+      expect(doc.subscribed).equal(false);
+    });
+
+    it('is set to true after subscribe completes', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.subscribe(function(err) {
+        if (err) return done(err);
+        expect(doc.subscribed).equal(true);
+        done();
+      });
+    });
+
+    it('is not set to true after subscribe completes if already unsubscribed', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.subscribe(function(err) {
+        if (err) return done(err);
+        expect(doc.subscribed).equal(false);
+        done();
+      });
+      doc.unsubscribe();
+    });
+
+    it('is set to false sychronously in unsubscribe', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.subscribe(function(err) {
+        if (err) return done(err);
+        expect(doc.subscribed).equal(true);
+        doc.unsubscribe();
+        expect(doc.subscribed).equal(false);
+        done();
+      });
+    });
+
+    it('is set to false sychronously on disconnect', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.subscribe(function(err) {
+        if (err) return done(err);
+        expect(doc.subscribed).equal(true);
+        doc.connection.close();
+        expect(doc.subscribed).equal(false);
+        done();
+      });
+    });
+  });
 });
 };

@@ -2,6 +2,7 @@
 
   [![NPM Version](https://img.shields.io/npm/v/sharedb.svg)](https://npmjs.org/package/sharedb)
   [![Build Status](https://travis-ci.org/share/sharedb.svg?branch=master)](https://travis-ci.org/share/sharedb)
+  [![Coverage Status](https://coveralls.io/repos/github/share/sharedb/badge.svg?branch=master)](https://coveralls.io/github/share/sharedb?branch=master)
 
 ShareDB is a realtime database backend based on [Operational Transformation
 (OT)](https://en.wikipedia.org/wiki/Operational_transformation) of JSON
@@ -101,6 +102,11 @@ submit a *create operation*, which will set the document's type and give it
 initial data. Then you can submit editing operations on the document (using
 OT). Finally you can delete the document with a delete operation. By
 default, ShareDB stores all operations forever - nothing is truly deleted.
+
+
+## Operations
+
+See https://github.com/ottypes/json0 for documentation of the supported operations.
 
 
 <!-- Old docs from LiveDB:

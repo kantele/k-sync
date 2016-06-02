@@ -200,24 +200,30 @@ describe('client query subscribe', function() {
     this.backend.db.canPollDoc = function() {
       return false;
     };
-    var query = connection.createSubscribeQuery('items', {}, {pollDebounce: 100});
-    var calls = 0;
+    var query = connection.createSubscribeQuery('items', {}, {pollDebounce: 1000});
+    var batchSizes = [];
     var total = 0;
+
     query.on('insert', function(docs) {
-      calls++;
+      batchSizes.push(docs.length);
       total += docs.length;
+      if (total === 1) {
+        // first write received by client. we're debouncing. create 9
+        // more documents.
+        for (var i = 1; i < 10; i++) connection.get('items', i.toString()).create({});
+      }
       if (total === 10) {
-        expect(calls).equal(2);
+        // first document is its own batch; then subsequent creates
+        // are debounced until after all other 9 docs are created
+        expect(batchSizes).eql([1, 9]);
         done();
       }
     });
-    function createDoc(count) {
-      connection.get('items', count.toString()).create({});
-      if (--count) {
-        setTimeout(createDoc, 5, count);
-      }
-    }
-    createDoc(10);
+
+    // create an initial document. this will lead to the 'insert'
+    // event firing the first time, while sharedb is definitely
+    // debouncing
+    connection.get('items', '0').create({});
   });
 
   it('db.pollDebounce option reduces subsequent poll interval', function(done) {
@@ -225,25 +231,31 @@ describe('client query subscribe', function() {
     this.backend.db.canPollDoc = function() {
       return false;
     };
-    this.backend.db.pollDebounce = 100;
+    this.backend.db.pollDebounce = 1000;
     var query = connection.createSubscribeQuery('items', {});
-    var calls = 0;
+    var batchSizes = [];
     var total = 0;
+
     query.on('insert', function(docs) {
-      calls++;
+      batchSizes.push(docs.length);
       total += docs.length;
+      if (total === 1) {
+        // first write received by client. we're debouncing. create 9
+        // more documents.
+        for (var i = 1; i < 10; i++) connection.get('items', i.toString()).create({});
+      }
       if (total === 10) {
-        expect(calls).equal(2);
+        // first document is its own batch; then subsequent creates
+        // are debounced until after all other 9 docs are created
+        expect(batchSizes).eql([1, 9]);
         done();
       }
     });
-    function createDoc(count) {
-      connection.get('items', count.toString()).create({});
-      if (--count) {
-        setTimeout(createDoc, 5, count);
-      }
-    }
-    createDoc(10);
+
+    // create an initial document. this will lead to the 'insert'
+    // event firing the first time, while sharedb is definitely
+    // debouncing
+    connection.get('items', '0').create({});
   });
 
   it('pollInterval updates a subscribed query after an unpublished create', function(done) {
