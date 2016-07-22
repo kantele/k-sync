@@ -1,6 +1,6 @@
 {
   "name": "k-sync",
-  "version": "0.11.37",
+  "version": "0.11.38",
   "description": "JSON OT database backend",
   "main": "lib/index.js",
   "dependencies": {
