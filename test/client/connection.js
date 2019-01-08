@@ -1,5 +1,6 @@
 var expect = require('expect.js');
 var Backend = require('../../lib/backend');
+var Connection = require('../../lib/client/connection');
 
 describe('client connection', function() {
 
@@ -55,6 +56,27 @@ describe('client connection', function() {
     });
   });
 
+  it('subscribing to same doc closes old stream and adds new stream to agent', function(done) {
+    var connection = this.backend.connect();
+    var agent = connection.agent;
+    var collection = 'test';
+    var docId = 'abcd-1234';
+    var doc = connection.get(collection, docId);
+    doc.subscribe(function(err) {
+      if (err) return done(err);
+      var originalStream = agent.subscribedDocs[collection][docId];
+      doc.subscribe(function() {
+        if (err) return done(err);
+        expect(originalStream).to.have.property('open', false);
+        var newStream = agent.subscribedDocs[collection][docId];
+        expect(newStream).to.have.property('open', true);
+        expect(newStream).to.not.be(originalStream);
+        connection.close();
+        done();
+      });
+    });
+  });
+
   it('emits socket errors as "connection error" events', function(done) {
     var connection = this.backend.connect();
     connection.on('connection error', function(err) {
@@ -88,6 +110,74 @@ describe('client connection', function() {
       var connection = backend.connect();
       expect(backend.agentsCount).equal(0);
     });
+  });
+
+  describe('state management using setSocket', function() {
+
+    it('initial connection.state is connecting, if socket.readyState is CONNECTING', function () {
+        // https://html.spec.whatwg.org/multipage/web-sockets.html#dom-websocket-connecting
+        var socket = {readyState: 0};
+        var connection = new Connection(socket);
+        expect(connection.state).equal('connecting');
+    });
+
+    it('initial connection.state is connecting, if socket.readyState is OPEN', function () {
+        // https://html.spec.whatwg.org/multipage/web-sockets.html#dom-websocket-open
+        var socket = {readyState: 1};
+        var connection = new Connection(socket);
+        expect(connection.state).equal('connecting');
+    });
+
+    it('initial connection.state is disconnected, if socket.readyState is CLOSING', function () {
+        // https://html.spec.whatwg.org/multipage/web-sockets.html#dom-websocket-closing
+        var socket = {readyState: 2};
+        var connection = new Connection(socket);
+        expect(connection.state).equal('disconnected');
+    });
+
+    it('initial connection.state is disconnected, if socket.readyState is CLOSED', function () {
+        // https://html.spec.whatwg.org/multipage/web-sockets.html#dom-websocket-closed
+        var socket = {readyState: 3};
+        var connection = new Connection(socket);
+        expect(connection.state).equal('disconnected');
+    });
+
+    it('initial state is connecting', function() {
+      var connection = this.backend.connect();
+      expect(connection.state).equal('connecting');
+    });
+
+    it('after connected event is emitted, state is connected', function(done) {
+      var connection = this.backend.connect();
+      connection.on('connected', function() {
+        expect(connection.state).equal('connected');
+        done();
+      });
+    });
+
+    it('when connection is manually closed, state is closed', function(done) {
+      var connection = this.backend.connect();
+      connection.on('connected', function() {
+        connection.close();
+      });
+      connection.on('closed', function() {
+        expect(connection.state).equal('closed');
+        done();
+      });
+    });
+
+    it('when connection is disconnected, state is disconnected', function(done) {
+      var connection = this.backend.connect();
+      connection.on('connected', function() {
+        // Mock a disconnection by providing a reason
+        connection.socket.close('foo');
+      });
+      connection.on('disconnected', function() {
+        expect(connection.state).equal('disconnected');
+        done();
+      });
+    });
+
   });
 
 });

@@ -1,5 +1,11 @@
 var async = require('async');
 var expect = require('expect.js');
+var types = require('../../lib/types');
+var deserializedType = require('./deserialized-type');
+var numberType = require('./number-type');
+types.register(deserializedType.type);
+types.register(deserializedType.type2);
+types.register(numberType.type);
 
 module.exports = function() {
 describe('client submit', function() {
@@ -245,7 +251,7 @@ describe('client submit', function() {
   });
 
   it('submit fails if the server is missing ops required for transforming', function(done) {
-    this.backend.db.getOpsToSnapshot = function(collection, id, from, snapshot, callback) {
+    this.backend.db.getOpsToSnapshot = function(collection, id, from, snapshot, options, callback) {
       callback(null, []);
     };
     var doc = this.backend.connect().get('dogs', 'fido');
@@ -267,8 +273,8 @@ describe('client submit', function() {
 
   it('submit fails if ops returned are not the expected version', function(done) {
     var getOpsToSnapshot = this.backend.db.getOpsToSnapshot;
-    this.backend.db.getOpsToSnapshot = function(collection, id, from, snapshot, callback) {
-      getOpsToSnapshot.call(this, collection, id, from, snapshot, function(err, ops) {
+    this.backend.db.getOpsToSnapshot = function(collection, id, from, snapshot, options, callback) {
+      getOpsToSnapshot.call(this, collection, id, from, snapshot, options, function(err, ops) {
         ops[0].v++;
         callback(null, ops);
       });
@@ -505,6 +511,7 @@ describe('client submit', function() {
   });
 
   it('submits fail above the backend.maxSubmitRetries threshold', function(done) {
+    var backend = this.backend;
     this.backend.maxSubmitRetries = 0;
     var doc = this.backend.connect().get('dogs', 'fido');
     var doc2 = this.backend.connect().get('dogs', 'fido');
@@ -512,18 +519,36 @@ describe('client submit', function() {
       if (err) return done(err);
       doc2.fetch(function(err) {
         if (err) return done(err);
-        var count = 0;
-        var cb = function(err) {
-          count++;
-          if (count === 1) {
-            if (err) return done(err);
-          } else {
-            expect(err).ok();
-            done();
+        var docCallback;
+        var doc2Callback;
+        // The submit retry happens just after an op is committed. This hook into the middleware
+        // catches both ops just before they're about to be committed. This ensures that both ops
+        // are certainly working on the same snapshot (ie one op hasn't been committed before the
+        // other fetches the snapshot to apply to). By storing the callbacks, we can then
+        // manually trigger the callbacks, first calling doc, and when we know that's been committed,
+        // we then commit doc2.
+        backend.use('commit', function (request, callback) {
+          if (request.op.op[0].na === 2) docCallback = callback;
+          if (request.op.op[0].na === 7) doc2Callback = callback;
+
+          // Wait until both ops have been applied to the same snapshot and are about to be committed
+          if (docCallback && doc2Callback) {
+            // Trigger the first op's commit and then the second one later, which will cause the
+            // second op to retry
+            docCallback();
           }
-        };
-        doc.submitOp({p: ['age'], na: 2}, cb);
-        doc2.submitOp({p: ['age'], na: 7}, cb);
+        });
+        doc.submitOp({p: ['age'], na: 2}, function (error) {
+          if (error) return done(error);
+          // When we know the first op has been committed, we try to commit the second op, which will
+          // fail because it's working on an out-of-date snapshot. It will retry, but exceed the
+          // maxSubmitRetries limit of 0
+          doc2Callback();
+        });
+        doc2.submitOp({p: ['age'], na: 7}, function (error) {
+          expect(error).ok();
+          done();
+        });
       });
     });
   });
@@ -605,7 +630,7 @@ describe('client submit', function() {
           if (err) return done(err);
           doc.pause();
           doc.submitOp({p: ['age'], na: 1}, function(err) {
-            expect(err).ok();
+            expect(err.code).to.equal(4017);
             expect(doc.version).equal(2);
             expect(doc.data).eql(undefined);
             done();
@@ -629,7 +654,7 @@ describe('client submit', function() {
             if (err) return done(err);
             doc.pause();
             doc.create({age: 9}, function(err) {
-              expect(err).ok();
+              expect(err.code).to.equal(4018);
               expect(doc.version).equal(3);
               expect(doc.data).eql({age: 5});
               done();
@@ -1035,6 +1060,113 @@ describe('client submit', function() {
       if (err) return done(err);
       doc._submit({}, null, function(err) {
         expect(err).ok();
+        done();
+      });
+    });
+  });
+
+  it('allows snapshot and op to be a non-object', function(done) {
+    var doc = this.backend.connect().get('dogs', 'fido');
+    doc.create(5, numberType.type.uri, function (err) {
+      if (err) return done(err);
+      expect(doc.data).to.equal(5);
+      doc.submitOp(2, function(err) {
+        if (err) return done(err);
+        expect(doc.data).to.equal(7);
+        done();
+      });
+    });
+  });
+
+  describe('type.deserialize', function() {
+    it('can create a new doc', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.create([3], deserializedType.type.uri, function(err) {
+        if (err) return done(err);
+        expect(doc.data).a(deserializedType.Node);
+        expect(doc.data).eql({value: 3, next: null});
+        done();
+      });
+    });
+
+    it('is stored serialized in backend', function(done) {
+      var db = this.backend.db;
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.create([3], deserializedType.type.uri, function(err) {
+        if (err) return done(err);
+        db.getSnapshot('dogs', 'fido', null, null, function(err, snapshot) {
+          if (err) return done(err);
+          expect(snapshot.data).eql([3]);
+          done();
+        });
+      });
+    });
+
+    it('deserializes on fetch', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      var doc2 = this.backend.connect().get('dogs', 'fido');
+      var backend = this.backend;
+      doc.create([3], deserializedType.type.uri, function(err) {
+        if (err) return done(err);
+        doc2.fetch(function(err) {
+          if (err) return done(err);
+          expect(doc2.data).a(deserializedType.Node);
+          expect(doc2.data).eql({value: 3, next: null});
+          done();
+        });
+      });
+    });
+
+    it('can create then submit an op', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.create([3], deserializedType.type.uri, function(err) {
+        if (err) return done(err);
+        doc.submitOp({insert: 0, value: 2}, function(err) {
+          if (err) return done(err);
+          expect(doc.data).eql({value: 2, next: {value: 3, next: null}});
+          done();
+        });
+      });
+    });
+
+    it('server fetches and transforms by already committed op', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      var doc2 = this.backend.connect().get('dogs', 'fido');
+      var backend = this.backend;
+      doc.create([3], deserializedType.type.uri, function(err) {
+        if (err) return done(err);
+        doc2.fetch(function(err) {
+          if (err) return done(err);
+          doc.submitOp({insert: 0, value: 2}, function(err) {
+            if (err) return done(err);
+            doc2.submitOp({insert: 1, value: 4}, function(err) {
+              if (err) return done(err);
+              expect(doc2.data).eql({value: 2, next: {value: 3, next: {value: 4, next: null}}});
+              done();
+            });
+          });
+        });
+      });
+    });
+  });
+
+  describe('type.createDeserialized', function() {
+    it('can create a new doc', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.create([3], deserializedType.type2.uri, function(err) {
+        if (err) return done(err);
+        expect(doc.data).a(deserializedType.Node);
+        expect(doc.data).eql({value: 3, next: null});
+        done();
+      });
+    });
+
+    it('can create a new doc from deserialized form', function(done) {
+      var doc = this.backend.connect().get('dogs', 'fido');
+      doc.create(new deserializedType.Node(3), deserializedType.type2.uri, function(err) {
+        if (err) return done(err);
+        expect(doc.data).a(deserializedType.Node);
+        expect(doc.data).eql({value: 3, next: null});
         done();
       });
     });
